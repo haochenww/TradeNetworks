@@ -1,0 +1,347 @@
+---
+title: "Trade Networks"
+author: "Haochen Wang, in collaboration with Shivani Gupta, Yichuan Yan"
+date: "Spring 2018"
+output: html_document
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+```
+
+```{r}
+#libraries
+library(igraph)
+library(dplyr)
+library(readxl)
+library(ggplot2)
+library(plotly)
+library(network)
+library(sna)
+library(ggnetwork)
+library(intergraph)
+library(tibble)
+library(tidygraph)
+library(ggraph)
+library(visNetwork)
+library(networkD3)
+library(leaflet)
+library(maps)
+library(shiny)
+library(readr)
+library(stringr)
+library(htmltools)
+library(rgeos)
+library(tidyverse)
+library(rgdal)
+```
+
+Motivating questions/background: China and US have recently been on a trade war..
+
+Tutorial style (how network works)? or mostly narrative about global events and using results from network/map as evidence?
+
+// Writing for network  
+
+Network science can further help us visualize these countries’ trade relationships. A network model contains edges, which may be directed or undirected and may be weighted, and nodes. Here, we have weighted directed edges specifying the amount of import or export, and nodes representing countries. Unlike the earlier maps, which use coordinates to display geographical information, networks don’t have coordinates. However, they are instead an excellent measure of centrality and interconnectivity – which nodes, or countries, are most central to the network, and how they are connected to others, can be understood more directly through network analyses.
+ 
+Because the subjects of interest are China and US, we again used the same datasets from WITS that contain export and import data for each of these two countries in 2016. They can be downloaded [here](https://wits.worldbank.org/CountryProfile/en/CHN) and [here](https://wits.worldbank.org/CountryProfile/en/USA). In preparation of the creations of networks, we first wrangled the dataset to exclude regions and continents that are not countries. Because each country still trades with about 200 other countries, we decided to only explore the relationships between China and US and each of their top 30 trading partners by export and import amount, to make the networks less complicated and focused on the most impacted countries. Then, we created a nodes `data.frame`, with *id* column to specify countries, and an edges `data.frame`, with *from* and *to* columns to associate trade amount between a source country and a destination country. The R package, `visNetwork`, which allows customization and interactivity controls, is finally used for network visualization.
+
+```{r}
+#Data wrangling: import and export for China and US
+China_export_import <- read_excel("China_export_import.xlsx", sheet = "Partner")
+US_export_import <- read_excel("US_export_import.xlsx", sheet = "Partner")
+
+
+China <- China_export_import %>%
+  filter(!`Partner Name` %in% c("North America", 
+                                "Middle East & North Africa", 
+                                "World", 
+                                "East Asia & Pacific", 
+                                "Europe & Central Asia", 
+                                "Other Asia, nes",
+                                "South Asia",
+                                "Sub-Saharan Africa",
+                                "Latin America & Caribbean"))
+US <- US_export_import %>%
+  filter(!`Partner Name` %in% c("North America", 
+                                "Middle East & North Africa", 
+                                "World", 
+                                "East Asia & Pacific", 
+                                "Europe & Central Asia", 
+                                "Other Asia, nes",
+                                "South Asia",
+                                "Sub-Saharan Africa",
+                                "Latin America & Caribbean"))
+
+```
+
+The first network shows interactivity between China and US and their individually top 30 trading partners by export amount. We can clearly see an interesting observation that China actively trades with Russia (Russian Federation) and Iran, while US sends lots of products to Israel. This reveals that Israel is particularly vulnerable to Trump’s trade war; because more than 30% of Israel’s GDP comes from exports, the country is heavily reliant on trade compared to China or US. As Beijing retaliates on US exports following Trump’s most recent policy on tariffs, Israel could easily fall as the greatest victim to the conflicts arising between China and US. Moreover, historically, China, Russia, and Iran have cooperated on a number of efforts to reassert their geopolitical influence against western countries, and they may align again this time, taking advantage of the ongoing strong trade relationships among them, to undermine US-led international order. 
+
+```{r}
+#Grab top 30 trading partners by export
+ChinaEx <- China %>%
+  select(`Reporter Name`, `Partner Name`, `Export (US$ Thousand)`) %>%
+  arrange(desc(`Export (US$ Thousand)`)) %>%
+  head(30)
+  
+USEx <- US %>%
+  select(`Reporter Name`, `Partner Name`, `Export (US$ Thousand)`) %>%
+  arrange(desc(`Export (US$ Thousand)`)) %>%
+  head(30)
+
+allEx <- rbind(ChinaEx, USEx)
+
+sourcesEx <- allEx %>%
+  distinct(`Reporter Name`) %>%
+  rename(label = `Reporter Name`)
+destinationsEx <- allEx %>%
+  distinct(`Partner Name`) %>%
+  rename(label = `Partner Name`)
+
+#Create nodes and edges for export network
+nodesEx <- full_join(sourcesEx, destinationsEx, by = "label") %>% rowid_to_column("id")
+
+edgesEx <- allEx %>% 
+  left_join(nodesEx, by = c(`Reporter Name` = "label")) %>% 
+  rename(from = id) %>% 
+  left_join(nodesEx, by = c(`Partner Name` = "label")) %>% 
+  rename(to = id)
+
+edgesEx <- select(edgesEx, from, to, `Export (US$ Thousand)`)
+
+nodesEx #check nodes
+edgesEx #check edges
+
+#Creating visual/interactive export network
+edgesEx <- mutate(edgesEx, width = allEx$`Export (US$ Thousand)`/10000000 + 1)
+edgesEx$title <- paste0("$",round((edgesEx$`Export (US$ Thousand)`)/1000000, digits = 2), "M")
+visNetwork(nodesEx, edgesEx, size = edgesEx, main = "Trade Export Network for China and US") %>% 
+  visEdges(arrows = "to", color = "grey") %>%
+  visNodes(color = list(background = "lightseagreen", 
+                        border = "darkblue",
+                        highlight = "gold")) %>% 
+  visOptions(highlightNearest = TRUE, nodesIdSelection = list(enabled = TRUE, main = "Select by Country")) %>%
+  visInteraction(hover = TRUE)
+
+```
+
+The second network provides similar context for imports to China and US. Although China and US share many top trading partners, whom US might be able to pursue ties with, China still takes quite a stronghold in global economic presence and would be able to obtain products from resource-rich countries like Iraq, Chile, and from concerning source categorized as “Unspecified”. 
+
+```{r}
+#Grab top 30 trading partners by export
+ChinaIm <- China %>%
+  select(`Reporter Name`, `Partner Name`, `Import (US$ Thousand)`) %>%
+  arrange(desc(`Import (US$ Thousand)`)) %>%
+  head(30)
+
+USIm <- US %>%
+  select(`Reporter Name`, `Partner Name`, `Import (US$ Thousand)`) %>%
+  arrange(desc(`Import (US$ Thousand)`)) %>%
+  head(30)
+
+allIm <- rbind(ChinaIm, USIm)
+
+sourcesIm <- allIm %>%
+  distinct(`Reporter Name`) %>%
+  rename(label = `Reporter Name`)
+destinationsIm <- allIm %>%
+  distinct(`Partner Name`) %>%
+  rename(label = `Partner Name`)
+
+#Create nodes and edges for import network
+nodesIm <- full_join(sourcesIm, destinationsIm, by = "label") %>% rowid_to_column("id")
+
+edgesIm <- allIm %>% 
+  left_join(nodesIm, by = c(`Reporter Name` = "label")) %>% 
+  rename(from = id) %>% 
+  left_join(nodesIm, by = c(`Partner Name` = "label")) %>% 
+  rename(to = id)
+
+edgesIm <- select(edgesIm, from, to, `Import (US$ Thousand)`)
+
+nodesIm #check nodes
+edgesIm #check edges
+
+#Creating visual/interactive export network
+edgesIm <- mutate(edgesIm, width = allIm$`Import (US$ Thousand)`/10000000 + 1)
+edgesIm$title <- paste0("$",round((edgesIm$`Import (US$ Thousand)`)/1000000, digits = 2), "M")
+visNetwork(nodesIm, edgesIm, size = edgesIm, main = "Trade Import Network for China and US") %>% 
+  visEdges(arrows = "from", color = "grey") %>%
+  visNodes(color = list(background = "lightcoral", 
+                        border = "darkred",
+                        highlight = "gold")) %>%
+  visOptions(highlightNearest = TRUE, nodesIdSelection = list(enabled = TRUE, main = "Select by Country")) %>%
+  visInteraction(hover = TRUE)
+```
+
+As a note to our readers – the networks are pretty fun to play with, so please click and drag any nodes to explore trades among these countries, or select a country in the top-left drop-down menu to see what countries are directly related to the chosen country. To check out the exact amount of export from China and US to other countries in US dollars, please hover above an edge. 
+
+Source: This dataset is from [World Integrated Trade Solution (WITS)](https://wits.worldbank.org/Default.aspx?lang=en), developed by the World Bank in collaboration with the United Nations Conference on Trade and Development (UNCTAD) and in consultation with organizations such as International Trade Center, United Nations Statistical Division (UNSD) and the World Trade Organization (WTO).
+
+#Maps
+```{r}
+
+#Setview command
+
+usa_countries_export <- readOGR("us_trade/ne_50m_admin_0_countries.shp")
+
+usa_countries_import <- readOGR("us_trade/ne_50m_admin_0_countries.shp")
+
+china_countries_export <- readOGR("us_trade/ne_50m_admin_0_countries.shp")
+china_countries_import <- readOGR("us_trade/ne_50m_admin_0_countries.shp")
+
+usa_export <- read.csv("us_trade/US_Export_TradePartner.csv")
+usa_export$Partner.Name <- as.character(usa_export$Partner.Name)
+usa_export$Rank <- ntile(usa_export$Export..US..Thousand., 30)
+
+usa_import <- read.csv("us_trade/US_Import_TradePartner.csv")
+
+usa_import$Partner.Name <- as.character(usa_import$Partner.Name)
+
+usa_import$Rank <- ntile(usa_import$Import..US..Thousand., 30)
+
+china_export <- read.csv("us_trade/China_Export_TradePartner.csv") 
+china_export$Partner.Name <- as.character(china_export$Partner.Name)
+china_export$Rank <- ntile(china_export$Export..US..Thousand., 30)
+
+china_import <- read.csv("us_trade/China_Import_TradePartner.csv")
+china_import$Partner.Name <- as.character(china_import$Partner.Name) 
+china_import$Rank <- ntile(china_import$Import..US..Thousand., 30)
+
+
+usa_countries_export@data <- 
+  left_join(usa_countries_export@data, usa_export , by = c("BRK_NAME" = "Partner.Name")) 
+
+usa_countries_import@data <- 
+  left_join(usa_countries_import@data, usa_import , by = c("BRK_NAME" = "Partner.Name"))
+
+
+china_countries_export@data <- left_join(china_countries_export@data, china_export , by = c("BRK_NAME" = "Partner.Name"))
+
+china_countries_import@data <- left_join(china_countries_import@data, china_import , by = c("BRK_NAME" = "Partner.Name"))
+
+
+
+ui <- navbarPage("USA/China Imports & Exports around the Globe" ,
+                 tabPanel ("USA" ,
+                           textOutput("text1"),   
+                           leafletOutput("mymap"),
+                           hr(),
+                           textOutput("text2"),
+                           leafletOutput("usaImp")
+                 ),
+                 tabPanel ("China" ,
+                           
+                           leafletOutput("chinaExp"),
+                           hr(),
+                           leafletOutput("chinaImp")
+                 )
+)
+
+
+
+server <- function(input, output, session) {
+  
+  Exp_Popups <- paste("<strong>", usa_countries_export@data$NAME , "<br>", usa_countries_export@data$Export_Thousands.x , "<br>")
+  
+  palUSexp <- colorNumeric(
+    palette = "Blues",
+    domain = usa_countries_export@data$Rank)
+  
+  palUSimp <- colorNumeric(
+    palette = "Greens",
+    domain = usa_countries_import@data$Rank)
+  
+  palChinaexp <- colorNumeric(
+    palette = "Reds",
+    domain = china_countries_export@data$Rank)
+  
+  palChinaimp <- colorNumeric(
+    palette = "Oranges",
+    domain = china_countries_export@data$Rank)
+  
+  output$text1 <- renderText({
+    paste("USA Exports in ", "Thousands")
+  })
+  
+  output$text2 <- renderText({
+    paste("USA Imports in ", "Thousands ($)")
+  })
+  
+  output$mymap <- renderLeaflet({
+    
+    leaflet(data = usa_countries_export) %>%
+      addProviderTiles("OpenStreetMap.BlackAndWhite") %>%
+      setView(0, 20, zoom = 1.6) %>%
+      addPolygons(fillColor = ~palUSexp(Rank), 
+                  fillOpacity = 0.4, 
+                  color = "#BDBDC3", 
+                  weight = 1,
+                  popup = paste("<strong>", "US->", usa_countries_export@data$NAME , "<br>", "Export(in $US Thousand):", usa_countries_export@data$Export..US..Thousand., "<br>")) %>%
+      addLegend(position = "bottomleft",
+                colors = c("#deebf7" , "#9ecae1", "#4292c6" , "#08519c", "#08306b"),
+                labels = c("low", "", "", "" , "high"),
+                title = "US Exports")
+    
+    
+  })
+  
+  
+  output$usaImp <- renderLeaflet({
+    
+    leaflet(data = usa_countries_import) %>%
+      addProviderTiles("OpenStreetMap.BlackAndWhite") %>%
+      setView(0, 20, zoom = 1.6) %>%
+      addPolygons(fillColor = ~palUSimp(Rank), 
+                  fillOpacity = 0.4, 
+                  color = "#BDBDC3", 
+                  weight = 1,
+                  popup = paste("<strong>", usa_countries_import@data$NAME , "->US", "<br>", "Import(in $US Thousand):", usa_countries_import@data$Import..US..Thousand., "<br>")) %>%
+      
+      addLegend(position = "bottomleft",
+                colors = c("#f7fcf5" , "#c7e9c0", "#a1d99b" , "#74c476", "#238b45"),
+                labels = c("low", "", "", "" , "high"),
+                title = "US Imports")
+      
+    
+  })
+  
+  output$chinaExp <- renderLeaflet({
+    
+    leaflet(data = china_countries_export) %>%
+      addProviderTiles("OpenStreetMap.BlackAndWhite") %>%
+      setView(0, 20, zoom = 1.6) %>%
+      addPolygons(fillColor = ~palChinaexp(Rank), 
+                  fillOpacity = 0.4, 
+                  color = "#FFF7BC" ,
+                  weight = 1,
+                  popup = paste("<strong>", "China ->", china_countries_export@data$NAME , "<br>", "Export(in $US Thousand):", china_countries_export@data$Export..US..Thousand., "<br>")) %>%
+      addLegend(position = "bottomleft",
+                colors = c("#fff5f0" , "#fee0d2", "#fc9272" , "#ef3b2c", "#a50f15"),
+                labels = c("low", "", "", "" , "high"),
+                title = "China Exports")
+    
+  })
+  
+  output$chinaImp <- renderLeaflet({
+    
+    leaflet(data = china_countries_import) %>%
+      addProviderTiles("OpenStreetMap.BlackAndWhite") %>%
+      setView(0, 20, zoom = 1.6) %>%
+      addPolygons(fillColor = ~palChinaimp(Rank), 
+                  fillOpacity = 0.4, 
+                  color = "#BDBDC3" ,
+                  weight = 1,
+                  popup = paste("<strong>", china_countries_import@data$NAME ,"->China", "<br>", "Import(in $US Thousand):", china_countries_import@data$Import..US..Thousand., "<br>")) %>%
+      addLegend(position = "bottomleft",
+                colors = c("#fdae6b" , "#fd8d3c", "#f16913" , "#d94801", "#a63603"),
+                labels = c("low", "", "", "" , "high"),
+                title = "China Imports")   
+    
+  })
+}
+
+shinyApp(ui, server)
+```
+
